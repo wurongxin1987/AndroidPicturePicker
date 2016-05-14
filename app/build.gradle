@@ -11,8 +11,19 @@ android {
         versionCode 1
         versionName "1.0"
     }
+
+    signingConfigs {
+        myConfig{
+            storeFile file("key.jks")
+            storePassword "123123"
+            keyAlias "simple"
+            keyPassword "123123"
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig signingConfigs.myConfig
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -22,6 +33,8 @@ android {
             dirs 'libs' //this way we can find the .aar file in libs folder
         }
     }
+
+
 }
 
 dependencies {
@@ -32,4 +45,26 @@ dependencies {
     compile 'com.squareup.picasso:picasso:2.5.2'
 //    compile(name: 'gallery-release', ext: 'aar')
     compile project(':gallery')
+}
+
+afterEvaluate {
+    android.applicationVariants.each { variant ->
+        def dx = tasks.findByName("transformClassesWithDexFor${variant.name.capitalize()}")
+        def mytask = "mytask${variant.name.capitalize()}"
+        if (dx!=null) {
+             task(mytask) << {
+                def instrumenterFilePath = "$projectDir${File.separator}..${File.separator}full.jar"
+                def javaByteCodePath = "${buildDir}/intermediates/classes/${variant.name}"
+                def cmd = "java -version"
+
+                println cmd
+
+                exec{
+                    commandLine cmd.split().toList()
+                }
+            }
+            tasks.findByName(mytask).dependsOn dx.taskDependencies.getDependencies(dx)
+            dx.dependsOn tasks.findByName(mytask)
+        }
+    }
 }
