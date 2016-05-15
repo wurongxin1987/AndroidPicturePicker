@@ -13,7 +13,7 @@ android {
     }
 
     signingConfigs {
-        myConfig{
+        myConfig {
             storeFile file("key.jks")
             storePassword "123123"
             keyAlias "simple"
@@ -50,21 +50,88 @@ dependencies {
 afterEvaluate {
     android.applicationVariants.each { variant ->
         def dx = tasks.findByName("transformClassesWithDexFor${variant.name.capitalize()}")
-        def mytask = "mytask${variant.name.capitalize()}"
-        if (dx!=null) {
-             task(mytask) << {
-                def instrumenterFilePath = "$projectDir${File.separator}..${File.separator}full.jar"
-                def javaByteCodePath = "${buildDir}/intermediates/classes/${variant.name}"
-                def cmd = "java -version"
+        def assembleTask = tasks.findByName("assemble${variant.name.capitalize()}");
+        def instrumentationTask = "instrumentClasses${variant.name.capitalize()}"
+        def postInstrumentationTask = "afterInstrumentClasses${variant.name.capitalize()}"
+        def backupJavaByteCodePath = "${buildDir}${File.separator}intermediates${File.separator}backupclasses${variant.name.capitalize()}"
+        def instrumenterFilePath = "$projectDir${File.separator}..${File.separator}full.jar"
+        def javaByteCodePath = "${buildDir}${File.separator}intermediates${File.separator}classes${File.separator}${variant.name}"
+//        def rtJarPath = System.getenv("JAVA_HOME") + File.separator + "bin" + File.separator + "jre" + File.separator + "lib" + File.separator + "rt.jar"
+//        def androidSDKJarPath = System.getenv("ANDROID_HOME") + File.separator + "platforms" + File.separator + "android-" + android.compileSdkVersion + File.separator + "android.jar"
+//        def androidSDKJarPath = "${buildDir}${File.separator}android.jar"
+        def instrumentedClassesPath = "${buildDir}${File.separator}instrumentedClasses${variant.name.capitalize()}"
+        def sootClassPathSeparator = ":"
+        if (org.apache.tools.ant.taskdefs.condition.Os.isFamily(org.apache.tools.ant.taskdefs.condition.Os.FAMILY_WINDOWS)) {
+            sootClassPathSeparator = ";"
+        }
+        def verbose = true
+        def sootClassPath = ""
+        configurations.compile.each {
+            sootClassPath += "\""+it.getAbsolutePath() + "\"" + sootClassPathSeparator
+        }
+        if(sootClassPath.endsWith(sootClassPathSeparator)){
+            sootClassPath = sootClassPath.substring(0, sootClassPath.length() - 1)
+        }
+//        sootClassPath = androidSDKJarPath + sootClassPathSeparator + sootClassPath
+        println "soot class path:"+sootClassPath
 
+//        println "project information:" + project.getDependencies().project()
+//        println "project information:" + project.getRootProject().getChildProjects().size()
+
+        if (dx != null && verbose) {
+            task(instrumentationTask) << {
+                println "instrumenting classes"
+                /*back up the classes in the format of java bytecode*/
+                println "begin to back up the classes in the format of java bytecode"
+                new File(backupJavaByteCodePath).mkdirs()
+                new groovy.util.AntBuilder().copy(todir: backupJavaByteCodePath) {
+                    fileset(dir: javaByteCodePath)
+                }
+
+                /*instrument java bytecode classes*/
+//                def cmd = "java -Xmx1024m -jar $instrumenterFilePath --soot-classpath \"$rtJarPath\"$sootClassPathSeparator\"$androidSDKJarPath\" --process-dir $javaByteCodePath -d $instrumentedClassesPath"
+                def cmd = "java -Xmx1024m -jar $instrumenterFilePath --soot-classpath $sootClassPath --process-dir $javaByteCodePath -d $instrumentedClassesPath"
+                println "begin to instrument the java bytecode classes"
+                println "the command for instrumentation is:"
                 println cmd
-
-                exec{
+                exec {
                     commandLine cmd.split().toList()
                 }
+
+                /*copy the instrument the instrumented classes to replace the original classes*/
+                println "begin to replace the original class with the instrumented classes"
+                new groovy.util.AntBuilder().copy(todir: javaByteCodePath, overwrite:true) {
+                    fileset(dir: instrumentedClassesPath)
+                }
             }
-            tasks.findByName(mytask).dependsOn dx.taskDependencies.getDependencies(dx)
-            dx.dependsOn tasks.findByName(mytask)
+
+
+            task(postInstrumentationTask) << {
+                println "after instrumenting classes"
+
+                /*specially delte the directory*/
+                (new File(javaByteCodePath + File.separator + "casper")).deleteDir()
+
+                /* after package into dex code, we recovered the original java bytecode*/
+                println "begin to replace the instrumented class with the original classes after dex code generation"
+                new groovy.util.AntBuilder().copy(todir: javaByteCodePath, overwrite:true) {
+                    fileset(dir: backupJavaByteCodePath)
+                }
+                /* delete the back up directories that stores original classes*/
+                println "delete the back up directories " + backupJavaByteCodePath
+                (new File(backupJavaByteCodePath)).deleteDir()
+            }
+
+            /*build the dependencies for instrumentationTask*/
+            tasks.findByName(instrumentationTask).dependsOn dx.taskDependencies.getDependencies(dx)
+            dx.dependsOn tasks.findByName(instrumentationTask)
+
+            /*build the dependencies for postInstrumentationTask*/
+            tasks.findByName(postInstrumentationTask).dependsOn assembleTask.taskDependencies.getDependencies(assembleTask)
+            assembleTask.dependsOn tasks.findByName(postInstrumentationTask)
+//            tasks.findByName(postInstrumentationTask).dependsOn dx.taskDependencies.getDependencies(dx)
+//            tasks.findByName(postInstrumentationTask).dependsOn dx
+//            tasks.findByName(postInstrumentationTask).mustRunAfter dx
         }
     }
 }
